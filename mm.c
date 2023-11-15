@@ -68,7 +68,7 @@ static void place(void* bp, size_t asize);
 static void cut_link(void* bp);
 static void push_first(void* bp);
 
-static char* heap_listp;												 // heap의 첫 번째 pointer-------------------------------------------------------
+static char* heap_listp;												 // heap의 첫 번째 pointer------------------------------------------------------- 
 
 int mm_init(void)														 // 메모리 처음 만들기
 {
@@ -140,21 +140,23 @@ static void* find_fit(size_t asize) {
         if (!GET_ALLOC(HDRP(bp)) && (asize <= GET_SIZE(HDRP(bp)))) {
             size_t diff = GET_SIZE(HDRP(bp)) - asize;
 
-            // 가장 잘 맞는 블록 갱신
+            // 요청 크기보다 약간 더 큰 첫 번째 블록을 반환
+            if (diff < smallest_diff && diff <= 32) { // 32는 임계값으로 설정
+                return bp;
+            }
+
+            // 그렇지 않으면 가장 작은 차이를 가진 블록을 저장
             if (diff < smallest_diff) {
                 best_fit = bp;
                 smallest_diff = diff;
             }
-
-            // 완벽하게 맞는 블록을 찾은 경우 즉시 반환
-            if (diff == 0) {
-                break;
-            }
         }
     }
 
-    return best_fit;
+    return best_fit; // 가장 적합한 블록 반환, 없으면 NULL 반환
 }
+
+
 
 
 static void place(void* bp, size_t asize) {                               // free 블록에 넣어주는 함수 ---------------------------------------------------------
