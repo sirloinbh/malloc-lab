@@ -26,182 +26,141 @@ team_t team = {
 
 /*------------------------------------------------------------------------------------------------------------------------------------------------------*/
 
+/*
+ * 메모리 관리 시스템의 일부로 사용되는 매크로 정의
+ * 메모리 할당 및 해제 로직을 단순화하고 표준화하기 위해 사용
+*/
+#define CHECK 0                                                                             // 디버깅 목적
+#define PRINTBLK 1                                                                          // 메모리 블록의 상태를 출력할지 여부를 결정
+#define ALIGNMENT 8                                                                         // 메모리 블록의 정렬을 위한 기본 단위
+#define ALIGN(size) (((size) + (ALIGNMENT-1)) & ~0x7)                                       // size를 ALIGNMENT의 배수로 정렬
+#define SIZE_T_SIZE (ALIGN(sizeof(size_t)))                                                 // size_t 데이터 타입의 크기를 ALIGNMENT에 맞추어 정렬
+#define PTR(blk) (&((blk)->left))                                                           // 실제 데이터를 포함하는 부분으로의 포인터를 반환
+#define COLOR(p) (*(unsigned int *)(p) & 0x6)                                               // 메모리 블록 p의 색상 정보를 가져옵니다.
 
-
-//set to 1 to call mm_check
-#define CHECK 0
-
-//set to 1 to make mm_check heap status
-#define PRINTBLK 1
-
-/* single word (4) or double word (8) alignment */
-#define ALIGNMENT 8
-
-/* rounds up to the nearest multiple of ALIGNMENT */
-#define ALIGN(size) (((size) + (ALIGNMENT-1)) & ~0x7)
-
-#define SIZE_T_SIZE (ALIGN(sizeof(size_t)))
-
-//returns pointer to the payload
-#define PTR(blk) (&((blk)->left))
-
-//returns the color of the block
-#define COLOR(p) (*(unsigned int *)(p) & 0x6)
-
-//set the color of the free block
-#define SETCOLOR(p, color) {*(unsigned int*)(p) = (*(unsigned int*)(p) & ~0x2) | (color);\
-                *(unsigned int *) ((void *) (p) + getsize(p) - 4) = *(unsigned int*) (p);}
+#define SETCOLOR(p, color) {*(unsigned int*)(p) = (*(unsigned int*)(p) & ~0x2) | (color);\  
+                *(unsigned int *) ((void *) (p) + getsize(p) - 4) = *(unsigned int*) (p);}  // 메모리 블록 p의 색상을 설정
 
 #define ALC 0
 #define FREE 1
 #define RED 0x0
-#define BLACK 0x2
+#define BLACK 0x2                                                                            //  할당된 상태, 미할당된 상태, 레드-블랙 트리의 빨간색 노드, 검은색 노드를 나타내는 상수
 
-/* makes header and footer from pointer, size and allocation bit */
-
+/*
+ * 메모리 관리 시스템을 구현하는 데 사용되는 구조체, 함수, 그리고 인라인 함수들을 정의
+ * 메모리 관리 시스템은 메모리 할당, 해제, 그리고 관리 작업을 수행하는 데 중요한 역할
+ */
 extern int verbose;
 
-
 void mm_check();
-
 void Exit(int st);
-
 void blkstatus(void *ptr);
 
 typedef struct block {
-    unsigned int header;
+    unsigned int header;                                                                       // 메모리 블록의 크기와 할당 상태를 저장하는 필드
     struct block *left;
     struct block *right;
     struct block *parent;
-    struct block *next;
+    struct block *next;                                                                         // 레드-블랙 트리 구현을 위한 포인터들
 } block_t;
 
-static block_t *startblk;
-static block_t *lastblk;
+static block_t *startblk;                                                                       // 메모리 힙의 시작
+static block_t *lastblk;                                                                        // 힙의 끝
 
-//fill in header and footer
-static inline void pack(block_t *blk, size_t size, int alloc);
-
-//check if header is valid
-static inline int header_valid(void *blk);
-
-//get size of block(including header and footer)
+static inline void pack(block_t *blk, size_t size, int alloc);                                  // 주어진 블록에 크기와 할당 상태를 설정
+static inline int header_valid(void *blk);                                                      // 블록의 헤더가 유효한지 검사
 static inline size_t getsize(block_t *blk);
 
-//set left node, set to lastblk if none
 static inline void setleft(block_t *blk, block_t *leftnode);
-
-//set right node, set to lastblk if none
 static inline void setright(block_t *blk, block_t *rightnode);
-
-//set parent node
 static inline void setparent(block_t *blk, block_t *parentnode);
+static inline void setnext(block_t *blk, block_t *nextnode);                                    // 레드-블랙 트리의 노드 관계를 설정
 
-//set next block in linked list
-static inline void setnext(block_t *blk, block_t *nextnode);
-
-//get adjacent block right after
 static inline block_t *getafter(block_t *blk);
+static inline block_t *getbefore(block_t *blk);                                                 // 주어진 블록에 인접한 블록을 찾는 함수
 
-//get adjacent block right before
-static inline block_t *getbefore(block_t *blk);
-
-//check if allocated
 static inline int allocated(block_t *blk);
+static inline int isfree(block_t *blk);                                                         // 블록이 할당되었는지 판단
 
-//check if block is free
-static inline int isfree(block_t *blk);
+static inline block_t *getroot();                                                               // 레드-블랙 트리의 루트 노드를 반환
 
-//returns root which is connected from static block startblk
-static inline block_t *getroot();
+static block_t *bestfit(size_t size);                                                           // 주어진 크기에 가장 적합한 메모리 블록을 찾습니다.
+static void rm_node(block_t *target);                                                           // 트리에서 노드를 제거
+static void insert_node(block_t *node);                                                         // 새로운 노드를 트리에 삽입
 
-//finds the best fit free block for given size, returns lastblk if none
-static block_t *bestfit(size_t size);
-
-//remove node
-static void rm_node(block_t *target);
-
-//insert node into the red-black tree
-static void insert_node(block_t *node);
-
-//count the number of free blocks by traversing heap area
 static int countfreelist();
-
-//count the number of free blocks by traversing tree
 static int checkfreetree(block_t *root);
+static int checkblackheight(block_t *root);                                                     // 메모리 관리 시스템의 일관성과 올바른 작동을 검증
 
-//check if leaf node has same black height
-static int checkblackheight(block_t *root);
-
-//when mm_check finds an error, this function will print what the tree looks like
-static void print_tree(block_t *node);
+static void print_tree(block_t *node);                                                          // 트리의 구조를 시각적으로 출력
 
 /*
- * mm_init - initialize the malloc package.
- *
- * First and second block will be prologue and epilogue block. Prologue block will
- * be used to keep track of root node, and epilogue block will be used as NIL block
- * in red-black tree. Color of epilogue block will be marked as black. This function
- * will also create initial root of the tree.
+ * 메모리 할당기(memory allocator)의 초기화 함수
+ * 메모리 할당기가 작동하기 전에 필요한 기본 구조를 설정하는 역할
+ * 프롤로그와 에필로그 블록은 힙의 시작과 끝을 표시하며, 초기 루트 노드는 레드-블랙 트리의 시작점
+ * 후속 메모리 할당 및 해제 요청을 효율적으로 처리
+ * 1. 메모리 확장
+ * 2. 오류 검사
+ * 3. 프롤로그 블록 설정
+ * 4. 에필로그 블록 설정
+ * 5. 초기 루트 노드 설정
  */
-
-
 int mm_init(void) {
-    void *p = mem_sbrk(4 + ALIGNMENT * 6 + ALIGNMENT * 10);
-    if (p == (void *) -1)
-        return -1;
+    void *p = mem_sbrk(4 + ALIGNMENT * 6 + ALIGNMENT * 10);                                        // 1
 
-    //prologue block, consists of header, footer and root pointer
+    if (p == (void *) -1)
+        return -1;                                                                                 // 2        
+
     p = p + 4;
     startblk = p;
-    pack(p, ALIGNMENT * 3, ALC);
+    pack(p, ALIGNMENT * 3, ALC);                                                                   // 3
 
     p = getafter(p);
-
-    //epilogue block, only consists of header and footer
-    //epilogue block size is 0
     lastblk = p;
     pack(lastblk, ALIGNMENT * 3, ALC);
     SETCOLOR(lastblk, BLACK);
-    setright(startblk, lastblk);
+    setright(startblk, lastblk);                                                                   // 4
+
     p = getafter(p);
-    pack(p, ALIGNMENT * 10, FREE); //initial root of tree
+    pack(p, ALIGNMENT * 10, FREE);
     SETCOLOR(p, BLACK);
     setright(startblk, p);
     setright(p, lastblk);
     setleft(p, lastblk);
-    setnext(p, lastblk);
+    setnext(p, lastblk);                                                                            // 5
+
     return 0;
 }
 
 /*
- * mm_malloc
- *
- * In malloc, function will put padding in size, and allocate block from free list
- * or sbrk. If size is small, size will be rounded up to nearest power of 2 to 
- * utilize coalescing. bestfit() will find the best free block to be allocated, 
- * and will call sbrk if no free block fits the size. When calling sbrk, if 
- * last block is free, function will extend the free block instead of extending
- * the heap with the entire block size.
+ * 요청된 크기의 메모리 블록을 할당하는 함수
+ * 메모리 할당 요청을 효율적으로 처리하고, 메모리 조각화를 최소화. 또한, 디버깅과 오류 검사를 위해 mm_check 함수를 선택적으로 호출
+ * 1. 요청 크기 조정
+ * 2. 정렬과 최소 크기 조정
+ * 3. 가장 적합한 블록 찾기
+ * 4. 메모리 할당 처리
+ * 5. mm_check 함수 호출
+ * 6. 할당된 메모리 반환
  */
-
 void *mm_malloc(size_t size) {
-//    printf("malloc %x\n", (unsigned int) size);
     size_t newsize, oldsize;
-    size_t rsize = size;
-    if (rsize < 64 * ALIGNMENT) {//round to nearest power of 2
+    size_t rsize = size;                                                                                
+    if (rsize < 64 * ALIGNMENT) {
         rsize--;
         rsize |= rsize >> 1;
         rsize |= rsize >> 2;
         rsize |= rsize >> 4;
         rsize |= rsize >> 8;
         rsize = rsize + 1;
-    }
+    }                                                                                                   // 1
+
     newsize = ALIGN(rsize + ALIGNMENT);
     block_t *p;
     if (newsize < 3 * ALIGNMENT)
-        newsize = 3 * ALIGNMENT;
-    p = bestfit(newsize);
+        newsize = 3 * ALIGNMENT;                                                                        // 2
+
+    p = bestfit(newsize);                                                                               // 3
+
     if (p == lastblk) {
         block_t *new_blk;
         block_t *endblock = getbefore(mem_heap_hi() + 1);
@@ -237,27 +196,31 @@ void *mm_malloc(size_t size) {
 
         pack(after, oldsize - newsize, FREE);
         insert_node(after);
-    }
+    }                                                                                                           // 4
+
     if (CHECK)
-        mm_check();
-    return PTR(p);
+        mm_check();                                                                                             // 5
+
+    return PTR(p);                                                                                              // 6
 }
 
 /*
- * mm_free
- * Free will make new free block, and store them in segregated list. insert_node
- * function will the put the node in tree. If adjacent blocks are free, 
- * new free block will be coalesced with them. Adjacent blocks will be removed from
- * tree, coalesced, and then will be put back into the tree.
+ * 할당된 메모리 블록을 해제하는 함수
+ * 주어진 메모리 블록을 해제하고, 가능한 경우 인접한 프리 블록과 병합하여 메모리 조각화를 최소화
+ * 병합된 프리 블록을 관리하기 위해 레드-블랙 트리를 사용
+ * 1. 포인터 조정 및 유효성 검사
+ * 2. 인접 블록 탐색
+ * 3. 메모리 병합 (Coalescing)
+ * 4. 프리 블록을 트리에 삽입
+ * 5. 메모리 상태 검사
  */
 void mm_free(void *ptr) {
-    block_t *p;//points to header
+    block_t *p;
     block_t *before, *after;
     size_t blksize;
     p = ptr - sizeof(unsigned int);
-//    printf("freeing %p (%p, size: %x)\n", ptr, p, (int) getsize(p));
+
     if (!header_valid(p) || !allocated(p)) {
-        //compare header and footer, return if invalid
         return;
     }
     blksize = getsize(p);
@@ -288,17 +251,19 @@ void mm_free(void *ptr) {
 }
 
 /*
- * mm_realloc 
- * If block is located at end of the heap, this function will extend heap without
- * moving the payload. If block next to target block is free, and if coalescing 
- * that block is enough to fit size, function will merge two blocks into one, and
- * return the same ptr without copying payload. If none of these can be applied, 
- * it will call mm_malloc and mm_free.
- */
+ * 할당된 메모리 블록의 크기를 재조정하는 함수
+ * 메모리 재할당 요청에 대해 효율적 대응
+ * 가능하면 기존 블록을 재사용하고, 그렇지 않을 경우 새로운 블록을 할당하여 데이터를 이동
+ * 1. 기존 블록 정보 얻기
+ * 2. 힙 확장을 통한 재할당
+ * 3. 인접 블록 병합을 통한 재할당
+ * 4. 새로운 메모리 할당과 데이터 복사
+ * 5. 결과 반환
+*/
 void *mm_realloc(void *ptr, size_t size) {
     block_t *oldblk = ptr - sizeof(unsigned int);
     void *newptr;
-    size_t oldSize = getsize(oldblk) - 2 * sizeof(unsigned int);
+    size_t oldSize = getsize(oldblk) - 2 * sizeof(unsigned int);                            // 1
 
     if ((void *) getafter(oldblk) > mem_heap_hi() && oldSize < size) {
         int extend = ALIGN(size - oldSize);
@@ -307,60 +272,75 @@ void *mm_realloc(void *ptr, size_t size) {
             return NULL;
         }
         pack(oldblk, extend + getsize(oldblk), ALC);
-        return ptr;
+        return ptr;                                                                         // 2
     } else if (oldSize < size) {
         block_t *after = getafter(oldblk);
         if (isfree(after) && oldSize + getsize(after) > size) {
             rm_node(after);
             pack(oldblk, oldSize + getsize(after), ALC);
             return ptr;
-        }
+        }                                                                                   // 3
 
-        //if realloc is called frequently, it might be called again
         newptr = mm_malloc(size);
         memcpy(newptr, ptr, oldSize);
         mm_free(ptr);
-        return newptr;
+        return newptr;                                                                      // 4 
     }
-    return ptr;
+
+    return ptr;                                                                             // 5
 }
    
-
+/*
+ * 주어진 루트 노드(root)에서 시작하는 이진 트리의 크기(노드의 수)를 계산하는 함수
+ * 재귀적으로 트리를 탐색하여 모든 노드의 수를 세어 트리의 전체 크기를 계산
+ * 이진 트리의 경우, 각 노드는 최대 두 개의 자식 노드를 가질 수 있으며, 이 함수는 각 노드를 방문하면서 그 수를 누적함
+ * 1. 기본 조건 검사
+ * 2. 재귀적 트리 탐색
+ * 3. 결과 반환
+*/
 int treesize(block_t *root) {
     if (root == lastblk)
-        return 0;
+        return 0;                                                                               // 1
+
     int freecnt = 1;
     freecnt += treesize(root->left);
-    freecnt += treesize(root->right);
-    return freecnt;
+    freecnt += treesize(root->right);                                                           // 2
+
+    return freecnt;                                                                             // 3
 }
 
+
+/*
+ * 메모리 관리 시스템에서 발생할 수 있는 오류를 확인하고 검증하는 함수
+ * 메모리 할당기의 오류를 조기에 감지하고 수정
+ * 메모리 관리 시스템의 구현에서 일관성과 정확성을 보장
+ * 1. 변수 초기화
+ * 2. 자유 블록의 수 계산
+ * 3. 일관성 검사
+ * 4. 레드-블랙 트리의 균형 상태 확인
+*/
 void mm_check() {
     int freeblks = 0;
-    int freelistblks = 0;
-
-    //checking heap start to end
+    int freelistblks = 0;                                                                           // 1
 
     freeblks = countfreelist();
+    freelistblks = checkfreetree(getroot());                                                        // 2
 
-    freelistblks = checkfreetree(getroot());
     if (freeblks != freelistblks) {
         printf("free blocks: %d, free blocks in list: %d\n", freeblks, freelistblks);
         Exit(0);
-    }
+    }                                                                                               // 3
 
-    checkblackheight(getroot());
-
-//    printf("free list size: %d, tree size: %d\n", freeblks, treesize(getroot()));
+    checkblackheight(getroot());                                                                    // 4
 
 }
 
-/**************** functions for mm_check ***************************/
+/************************************************** mm_check를 위한 함수들 *****************************************************/
 
-//returns 1 header p is valid
+
 static inline int header_valid(void *blk) {
     return *(unsigned int *) blk == *(unsigned int *) (blk + getsize(blk) - 4);
-}
+}                                                                                           
 
 int cntlist(block_t *node) {
     if (node == lastblk)
@@ -381,7 +361,7 @@ int checkfreetree(block_t *root) {
         printf("tree connection is messed up\n");
         Exit(1);
     }
-    root->header = root->header | 0x4;//flag for checking visited node
+    root->header = root->header | 0x4; 
     int freecnt = cntlist(root);
     if (COLOR(root) == RED) {
         if (COLOR(left) == RED || COLOR(right) == RED) {
@@ -415,8 +395,6 @@ int checkblackheight(block_t *root) {
     return l;
 }
 
-//Exit fuction - called when mm_check finds an error, will deinitialize heap and
-//print heap status to help debugging, including heap area and tree structure.
 void Exit(int st) {
     printf("\n--Exit summary--\nheap area: %p to %p\nheap size: %x\n", mem_heap_lo(), mem_heap_hi(),
            (unsigned int) mem_heapsize());
@@ -426,7 +404,6 @@ void Exit(int st) {
     exit(st);
 }
 
-//blkstatus will print the reason of failure
 void blkstatus(void *ptr) {
     printf("\n");
     if (ptr < mem_heap_lo() || ptr > mem_heap_hi() || !((long) (ptr + 4) & 0x7)) {
@@ -471,7 +448,6 @@ int countfreelist() {
     return cnt;
 }
 
-//print entire tree, will use two array of pointer instead of using dynamic array
 void print_tree(block_t *node) {
     int ARRAYSIZE = 500;
     block_t *array1[ARRAYSIZE];
@@ -494,7 +470,6 @@ void print_tree(block_t *node) {
                 next[j++] = current[i]->left;
                 next[j++] = current[i]->right;
                 if (j > ARRAYSIZE - 2) {
-                    //This won't happen actually
                     printf("\ntree is too big to print it all\n");
                     return;
                 }
@@ -579,38 +554,16 @@ block_t *getroot() {
 }
 
 /***************static functions for recursive call****************/
-
 static block_t *__tree_search__(block_t *node, size_t size);
-
 static void __insert_node__(block_t *root, block_t *node);
-
 static void __insert_balance__(block_t *node);
-
 static block_t *__find_min__(block_t *node);
-
 static void __rm_node__(block_t *node);
-
 static void __double_black__(block_t *p, block_t *node);
-
 static void __left_rotate__(block_t *node);
-
 static void __right_rotate__(block_t *node);
-
 /************* functions for red-black tree **********************/
 
-/*
- * These functions are used in malloc and free, and will search for node or delete
- * a node. 
- * 
- * bestfit - a function that finds the free block which best fits the input size.
- *
- * insert_node - this will insert node into the tree. If node with same size 
- * exist in red-black tree, node will be put into list, and if it doesn't, this 
- * will be inserted as new node of the red-black tree.
- *
- * rm_node - will remove a node from linked list, and if list size is 1, the node 
- * will be removed from red-black tree.
- */
 block_t *bestfit(size_t size) {
     block_t *blk = getroot();
     return __tree_search__(blk, size);
@@ -620,7 +573,6 @@ block_t *bestfit(size_t size) {
 void insert_node(block_t *node) {
     block_t *root = getroot();
     if (root == lastblk) {
-        //tree empty, make node root
         setright(startblk, node);
         setright(node, lastblk);
         setleft(node, lastblk);
@@ -641,7 +593,6 @@ void rm_node(block_t *target) {
     block_t *prev = target->parent;
     block_t *next = target->next;
     if (getsize(prev) == getsize(target) && isfree(prev)) {
-        //parent could be prologue block
         setnext(prev, next);
         return;
     } else if (next != lastblk) {
@@ -652,20 +603,14 @@ void rm_node(block_t *target) {
         return;
     }
 
-    //no replaceable entry in seg-list
     block_t *replace = NULL;
     if (target->left != lastblk && target->right != lastblk) {
-        //has two child node
         replace = __find_min__(target->right);
     } else {
         __rm_node__(target);
         return;
     }
     __rm_node__(replace);
-
-    /* after __rm_node__, replace block is not on the tree
-       tree balance will be performed with target node,
-       and target node will be switched to replace block afterwards */
 
     setparent(replace, target->parent);
     setleft(replace, target->left);
@@ -698,13 +643,11 @@ block_t *__tree_search__(block_t *node, size_t size) {
 
 void __insert_node__(block_t *root, block_t *node) {
     if (getsize(root) > getsize(node)) {
-        //left
         if (root->left == lastblk) {
             setleft(root, node);
             __insert_balance__(node);
         } else __insert_node__(root->left, node);
     } else if (getsize(root) < getsize(node)) {
-        //right
         if (root->right == lastblk) {
             setright(root, node);
             __insert_balance__(node);
@@ -716,11 +659,6 @@ void __insert_node__(block_t *root, block_t *node) {
     }
 }
 
-/*
- * balance function - only call on new leaf node or color change
- * input must be always red
- * this function will balance the tree by rules of the red-black tree
- */
 void __insert_balance__(block_t *node) {
     block_t *parent = node->parent;
     block_t *grandparent = parent->parent;
@@ -733,30 +671,28 @@ void __insert_balance__(block_t *node) {
                  grandparent->right : grandparent->left;
     if (COLOR(parent) == RED) {//red child of red node
         if (getsize(grandparent) <= getsize(parent) && COLOR(s) == BLACK) {
-            if (getsize(node) < getsize(parent)) {     //  g
-                __right_rotate__(node);                //     p
-                SETCOLOR(node, BLACK);                 //   n
+            if (getsize(node) < getsize(parent)) {     
+                __right_rotate__(node);                
+                SETCOLOR(node, BLACK);                 
                 SETCOLOR(grandparent, RED);
                 __left_rotate__(node);
             } else {
                 SETCOLOR(parent, BLACK);
                 SETCOLOR(grandparent, RED);
-                //counter-clockwise rotate
                 __left_rotate__(parent);
             }
         } else if (getsize(parent) < getsize(grandparent) && COLOR(s) == BLACK) {
-            if (getsize(parent) <= getsize(node)) {      //    g
-                __left_rotate__(node);                   // p
-                SETCOLOR(node, BLACK);                   //   n
+            if (getsize(parent) <= getsize(node)) {      
+                __left_rotate__(node);                   
+                SETCOLOR(node, BLACK);                   
                 SETCOLOR(grandparent, RED);
                 __right_rotate__(node);
             } else {
                 SETCOLOR(parent, BLACK);
                 SETCOLOR(grandparent, RED);
-                //clockwise rotate
                 __right_rotate__(parent);
             }
-        } else {                            // grandparent(b) have two red child
+        } else {                            
             SETCOLOR(grandparent, RED);
             SETCOLOR(grandparent->left, BLACK);
             SETCOLOR(grandparent->right, BLACK);
@@ -765,7 +701,6 @@ void __insert_balance__(block_t *node) {
     }
 }
 
-//function that finds minimum value: used for removing node
 block_t *__find_min__(block_t *node) {
     block_t *left = node;
     while (left->left != lastblk)
@@ -773,13 +708,9 @@ block_t *__find_min__(block_t *node) {
     return left;
 }
 
-/*
- * function for removing node with one or no child,
- * will completely detach node from tree
- */
 void __rm_node__(block_t *node) {
     block_t *parent = node->parent;
-    block_t *child; //child = existing child node, lastblk(black) if none
+    block_t *child; 
 
     child = (node->left == lastblk) ? node->right : node->left;
 
@@ -791,13 +722,12 @@ void __rm_node__(block_t *node) {
         __double_black__(parent, child);
 }
 
-//for managing double-black occasion from removing node
 void __double_black__(block_t *p, block_t *node) {
-    if (node == startblk)//made tree empty, no need to do anything
+    if (node == startblk)
         return;
     if (node == getroot())
         return;
-    block_t *s, *l, *r;//sibling, sibling-left, sibling-right
+    block_t *s, *l, *r;
     if (p->left == node) {
         s = p->right;
         l = s->left;
