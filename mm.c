@@ -53,6 +53,7 @@ static void* find_fit(size_t asize);
 static void place(void* bp, size_t asize);
 
 static char* heap_listp;												 // heap의 첫 번째 pointer-------------------------------------------------------
+static char *last_bp = NULL;
 
 int mm_init(void)														 // 메모리 처음 만들기
 {
@@ -112,15 +113,24 @@ void* mm_malloc(size_t size)											 // 메모리할당----------------------
 }
 
 
-static void* find_fit(size_t asize) {									 // 들어갈 자리를 찾는 함수------------------------------------------------------------
-	void* bp;
+static void* find_fit(size_t asize) {
+    char *bp;
+    char *best_fit = NULL;
+    size_t smallest_diff = (size_t)-1; // 최대 크기로 초기화
 
-	for (bp = heap_listp; GET_SIZE(HDRP(bp)) > 0; bp = NEXT_BLKP(bp)) {  // bp 처음부터 블록단위로 for문 0(epilogue) 
-		if (!GET_ALLOC(HDRP(bp)) && (asize <= GET_SIZE(HDRP(bp)))) {     // header가 free 이거나  주어진 사이즈보다 fit하면
-			return bp;
-		}
-	}
-	return NULL;
+    // 전체 힙을 순회하며 가장 적합한 블록을 찾음
+    for (bp = heap_listp; GET_SIZE(HDRP(bp)) > 0; bp = NEXT_BLKP(bp)) {
+        if (!GET_ALLOC(HDRP(bp))) {
+            size_t curr_diff = GET_SIZE(HDRP(bp)) - asize;
+            // 충분히 크고, 현재까지 찾은 것 중 가장 차이가 적은 블록을 저장
+            if (asize <= GET_SIZE(HDRP(bp)) && curr_diff < smallest_diff) {
+                best_fit = bp;
+                smallest_diff = curr_diff;
+            }
+        }
+    }
+
+    return best_fit; // 가장 적합한 블록 반환, 없으면 NULL 반환
 }
 
 static void place(void* bp, size_t asize) {                               // free 블록에 넣어주는 함수 ---------------------------------------------------------
