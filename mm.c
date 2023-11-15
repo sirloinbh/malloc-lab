@@ -118,33 +118,20 @@ int mm_init(void)														 // 메모리 처음 만들기
 	return 0;
 }
 
-static void* extend_heap(size_t words) {
-    char* bp;
-    size_t size;
+static void* extend_heap(size_t words) {								 // 힙을 넘어간다면 힙을 추가로 받아옴---------------------------------------------
+	char* bp;
+	size_t size;
 
-    // 요청 크기에 따라 동적으로 크기 조정
-    size = (words % 2) ? (words + 1) * WSIZE : words * WSIZE;
+	size = (words % 2) ? (words + 1) * WSIZE : words * WSIZE;			 // 짝수로 만듬
+	if ((long)(bp = mem_sbrk(size)) == -1)								 // 너무 커서 할당 못받으면 return -1
+		return NULL;
 
-    // 예: 최근 확장 횟수에 따라 크기를 조정
-    // 이는 단순한 예시이며, 실제 구현은 메모리 사용 패턴을 분석하여 조정해야 합니다.
-    static int recent_expands = 0;
-    if (recent_expands > 5) {
-        size *= 2; // 빈번한 요청에 대응하여 크기 증가
-    } else if (recent_expands < 3) {
-        size = size > CHUNKSIZE ? size / 2 : size; // 요청 감소시 크기 감소
-    }
-    recent_expands++;
+	PUT(HDRP(bp), PACK(size, 0));										 // block header free
+	PUT(FTRP(bp), PACK(size, 0));                                        // block putter free
+	PUT(HDRP(NEXT_BLKP(bp)), PACK(0, 1));								 // 새로운 epiloge 헤더
 
-    if ((long)(bp = mem_sbrk(size)) == -1)
-        return NULL;
-
-    PUT(HDRP(bp), PACK(size, 0));
-    PUT(FTRP(bp), PACK(size, 0));
-    PUT(HDRP(NEXT_BLKP(bp)), PACK(0, 1));
-
-    return coalesce(bp);
+	return coalesce(bp);												 // 만약 전 block이 프리였다면 합친다.
 }
-
 
 void* mm_malloc(size_t size)											 // 메모리할당-----------------------------------------------------------------------
 {
