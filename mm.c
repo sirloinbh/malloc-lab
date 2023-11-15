@@ -118,20 +118,33 @@ int mm_init(void)														 // 메모리 처음 만들기
 	return 0;
 }
 
-static void* extend_heap(size_t words) {								 // 힙을 넘어간다면 힙을 추가로 받아옴---------------------------------------------
-	char* bp;
-	size_t size;
+static void* extend_heap(size_t words) {
+    char* bp;
+    size_t size;
 
-	size = (words % 2) ? (words + 1) * WSIZE : words * WSIZE;			 // 짝수로 만듬
-	if ((long)(bp = mem_sbrk(size)) == -1)								 // 너무 커서 할당 못받으면 return -1
-		return NULL;
+    // 요청 크기에 따라 동적으로 크기 조정
+    size = (words % 2) ? (words + 1) * WSIZE : words * WSIZE;
 
-	PUT(HDRP(bp), PACK(size, 0));										 // block header free
-	PUT(FTRP(bp), PACK(size, 0));                                        // block putter free
-	PUT(HDRP(NEXT_BLKP(bp)), PACK(0, 1));								 // 새로운 epiloge 헤더
+    // 예: 최근 확장 횟수에 따라 크기를 조정
+    // 이는 단순한 예시이며, 실제 구현은 메모리 사용 패턴을 분석하여 조정해야 합니다.
+    static int recent_expands = 0;
+    if (recent_expands > 5) {
+        size *= 2; // 빈번한 요청에 대응하여 크기 증가
+    } else if (recent_expands < 3) {
+        size = size > CHUNKSIZE ? size / 2 : size; // 요청 감소시 크기 감소
+    }
+    recent_expands++;
 
-	return coalesce(bp);												 // 만약 전 block이 프리였다면 합친다.
+    if ((long)(bp = mem_sbrk(size)) == -1)
+        return NULL;
+
+    PUT(HDRP(bp), PACK(size, 0));
+    PUT(FTRP(bp), PACK(size, 0));
+    PUT(HDRP(NEXT_BLKP(bp)), PACK(0, 1));
+
+    return coalesce(bp);
 }
+
 
 void* mm_malloc(size_t size)											 // 메모리할당-----------------------------------------------------------------------
 {
@@ -162,26 +175,41 @@ void* mm_malloc(size_t size)											 // 메모리할당----------------------
 }
 
 
-static void* find_fit(size_t asize) {
-    void* bp;
-    void* best_fit = NULL;
-    size_t min_diff = (size_t)-1; // 가장 작은 차이를 저장하기 위한 변수, 초기값은 최대치로 설정
+static void* find_fit(size_t asize) {									 // 들어갈 자리를 찾는 함수  best fit -------------------------------------------------------
+	void* bp;
+	void* best_bp = (char*)NULL;
 
-    for (bp = heap_listp; GET_SIZE(HDRP(bp)) > 0; bp = NEXT_BLKP(bp)) {
-        if (!GET_ALLOC(HDRP(bp)) && (asize <= GET_SIZE(HDRP(bp)))) {
-            size_t diff = GET_SIZE(HDRP(bp)) - asize;
-            if (diff < min_diff) {
-                best_fit = bp;
-                min_diff = diff;
-            }
-        }
-    }
+	size_t best;
 
-    return best_fit; // 가장 적절한 블록을 반환, 없으면 NULL 반환
+	static char* seg;
+
+	int i = 0;
+	for (i = 32; i > 0; i--) { 		 									 // 2^32 부터 비트연산으로 적당한 값을 찾음 (작은값은 필요없다.) 
+		if ((asize & (1 << (i))) > 0) {
+			break;
+		}
+	}
+
+	int j = i;
+	for (j = i; j <= 32; j++) {											 // 적당한 값부터 탐색 시작
+		seg = seg_listp + (j * WSIZE);
+		if (GET_P(seg) != (char*)NULL) {								 // n번째 주소가 비어있지 않다면 탐색한다.
+			best = (1 << (j + 1));									     // best 값을 비교하기 위한 초기값
+			for (bp = PREV_FREE_BLKP(seg); bp != (char*)NULL; bp = PREV_FREE_BLKP(bp)) {	// segregated list부터 찾아서 들어감
+				if (asize <= GET_SIZE(HDRP(bp)) && GET_SIZE(HDRP(bp)) - asize < best) {     // block이 주어진 사이즈보다 fit하고 best라면
+					best_bp = bp;
+					best = GET_SIZE(HDRP(bp)) - asize;										// best 블록의 주소값을 저장해둠
+					//return bp;
+				}
+			}
+			if (best_bp != (char*)NULL) {
+				return best_bp;											// 찾은 best 블록이 있다면 반환
+			}
+		}
+	}
+
+	return NULL;														// 못 찾았다면 null 반환, extend 받게될 것
 }
-
-
-
 static void place(void* bp, size_t asize) {                               // free 블록에 넣어주는 함수 ---------------------------------------------------------
 	size_t csize = GET_SIZE(HDRP(bp));								      // 헤더의 사이즈를 읽어옴
 
