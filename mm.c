@@ -196,3 +196,4 @@ void* mm_realloc(void* bp, size_t size) 								  // reallocation---------------
 	mm_free(old_dp);													  // 기존 사이즈는 삭제
 	return new_dp;
 }
+
