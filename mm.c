@@ -115,22 +115,23 @@ void* mm_malloc(size_t size)											 // 메모리할당----------------------
 
 static void* find_fit(size_t asize) {
     char *bp;
-    char *best_fit = NULL;
-    size_t smallest_diff = (size_t)-1; // 최대 크기로 초기화
+    char *good_fit = NULL;
+    size_t threshold = asize + 32; // 요청 크기보다 약간 큰 임계값 설정
 
-    // 전체 힙을 순회하며 가장 적합한 블록을 찾음
     for (bp = heap_listp; GET_SIZE(HDRP(bp)) > 0; bp = NEXT_BLKP(bp)) {
-        if (!GET_ALLOC(HDRP(bp))) {
-            size_t curr_diff = GET_SIZE(HDRP(bp)) - asize;
-            // 충분히 크고, 현재까지 찾은 것 중 가장 차이가 적은 블록을 저장
-            if (asize <= GET_SIZE(HDRP(bp)) && curr_diff < smallest_diff) {
-                best_fit = bp;
-                smallest_diff = curr_diff;
+        if (!GET_ALLOC(HDRP(bp)) && GET_SIZE(HDRP(bp)) >= asize) {
+            // 요청 크기보다 크고 임계값보다 작은 첫 번째 블록을 반환
+            if (GET_SIZE(HDRP(bp)) <= threshold) {
+                return bp;
+            }
+            // 임계값보다 크지만 현재까지 찾은 것 중 가장 작은 블록을 저장
+            if (good_fit == NULL || GET_SIZE(HDRP(good_fit)) > GET_SIZE(HDRP(bp))) {
+                good_fit = bp;
             }
         }
     }
 
-    return best_fit; // 가장 적합한 블록 반환, 없으면 NULL 반환
+    return good_fit; // 가장 적합한 블록 반환, 없으면 NULL 반환
 }
 
 static void place(void* bp, size_t asize) {                               // free 블록에 넣어주는 함수 ---------------------------------------------------------
