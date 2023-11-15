@@ -53,7 +53,7 @@ static void* find_fit(size_t asize);
 static void place(void* bp, size_t asize);
 
 static char* heap_listp;												 // heap의 첫 번째 pointer-------------------------------------------------------
-static char *last_bp = NULL;
+static char *last_bp = NULL; // 마지막으로 찾은 프리 블록 위치를 저장
 
 int mm_init(void)														 // 메모리 처음 만들기
 {
@@ -67,6 +67,7 @@ int mm_init(void)														 // 메모리 처음 만들기
 	if (extend_heap(CHUNKSIZE / WSIZE) == NULL)                          // chunk size 확인(받을수 있는 사이즈인지)
 		return -1;
 
+	last_bp = heap_listp; // 초기화
 	return 0;
 }
 
@@ -115,24 +116,32 @@ void* mm_malloc(size_t size)											 // 메모리할당----------------------
 
 static void* find_fit(size_t asize) {
     char *bp;
-    char *good_fit = NULL;
-    size_t threshold = asize + 32; // 요청 크기보다 약간 큰 임계값 설정
 
-    for (bp = heap_listp; GET_SIZE(HDRP(bp)) > 0; bp = NEXT_BLKP(bp)) {
-        if (!GET_ALLOC(HDRP(bp)) && GET_SIZE(HDRP(bp)) >= asize) {
-            // 요청 크기보다 크고 임계값보다 작은 첫 번째 블록을 반환
-            if (GET_SIZE(HDRP(bp)) <= threshold) {
-                return bp;
-            }
-            // 임계값보다 크지만 현재까지 찾은 것 중 가장 작은 블록을 저장
-            if (good_fit == NULL || GET_SIZE(HDRP(good_fit)) > GET_SIZE(HDRP(bp))) {
-                good_fit = bp;
-            }
+    // last_bp 초기화 검사
+    if (last_bp == NULL) {
+        last_bp = heap_listp;
+    }
+
+    // last_bp에서 시작하여 충분히 큰 블록을 찾을 때까지 순환
+    for (bp = last_bp; GET_SIZE(HDRP(bp)) > 0; bp = NEXT_BLKP(bp)) {
+        if (!GET_ALLOC(HDRP(bp)) && (asize <= GET_SIZE(HDRP(bp)))) {
+            last_bp = bp; // 찾은 위치를 저장
+            return bp;
         }
     }
 
-    return good_fit; // 가장 적합한 블록 반환, 없으면 NULL 반환
+    // 처음부터 last_bp까지 다시 탐색
+    for (bp = heap_listp; bp < last_bp; bp = NEXT_BLKP(bp)) {
+        if (!GET_ALLOC(HDRP(bp)) && (asize <= GET_SIZE(HDRP(bp)))) {
+            last_bp = bp; // 찾은 위치를 저장
+            return bp;
+        }
+    }
+
+    return NULL; // 적절한 블록을 찾지 못한 경우
 }
+
+
 
 static void place(void* bp, size_t asize) {                               // free 블록에 넣어주는 함수 ---------------------------------------------------------
 	size_t csize = GET_SIZE(HDRP(bp));								      // 헤더의 사이즈를 읽어옴
@@ -160,33 +169,46 @@ void mm_free(void* bp)													  //블록 free시키는 함수 -------------
 	coalesce(bp);														  // coalesce 시켜줌
 }
 
-static void* coalesce(void* bp)											  // 연속된 free 처리--------------------------------------------------------------------
-{
-	size_t prev_alloc = GET_ALLOC(FTRP(PREV_BLKP(bp)));					  // 전에 블록이 alloc 인가
-	size_t next_alloc = GET_ALLOC(HDRP(NEXT_BLKP(bp)));					  // 다음 블록이 alloc 인가
-	size_t size = GET_SIZE(HDRP(bp));									  // 현재 노드의 사이즈
+static void* coalesce(void* bp) {
+    size_t prev_alloc = GET_ALLOC(FTRP(PREV_BLKP(bp)));
+    size_t next_alloc = GET_ALLOC(HDRP(NEXT_BLKP(bp)));
+    size_t size = GET_SIZE(HDRP(bp));
 
-	if (prev_alloc && next_alloc) {										  // case 1 : 앞 뒤 다 alloc
-		return bp;														  // 그냥 리턴
-	}
-	else if (prev_alloc && !next_alloc) {								  // case 2 : 다음도 free
-		size += GET_SIZE(HDRP(NEXT_BLKP(bp)));							  // 다음 블록의 사이즈까지 합쳐서 free시킴
-		PUT(HDRP(bp), PACK(size, 0));
-		PUT(FTRP(bp), PACK(size, 0));
-	}
-	else if (!prev_alloc && next_alloc) {								  // case 3 : 전꺼도 free
-		size += GET_SIZE(HDRP(PREV_BLKP(bp)));							  // 전의 사이즈까지 합쳐서 free시킴
-		PUT(FTRP(bp), PACK(size, 0));
-		PUT(HDRP(PREV_BLKP(bp)), PACK(size, 0));
-		bp = PREV_BLKP(bp);
-	}
-	else {																  // case 4 : 앞 뒤 다 free 
-		size += GET_SIZE(HDRP(PREV_BLKP(bp))) + GET_SIZE(FTRP(NEXT_BLKP(bp)));
-		PUT(HDRP(PREV_BLKP(bp)), PACK(size, 0));
-		PUT(FTRP(NEXT_BLKP(bp)), PACK(size, 0));
-		bp = PREV_BLKP(bp);
-	}
-	return bp;
+    // 이전 블록과 병합
+    if (!prev_alloc && next_alloc) {
+        size += GET_SIZE(HDRP(PREV_BLKP(bp)));
+        PUT(FTRP(bp), PACK(size, 0));
+        PUT(HDRP(PREV_BLKP(bp)), PACK(size, 0));
+        bp = PREV_BLKP(bp);
+        
+        // last_bp 갱신
+        if (last_bp == NEXT_BLKP(bp)) {
+            last_bp = bp;
+        }
+    }
+    // 다음 블록과 병합
+    else if (prev_alloc && !next_alloc) {
+        size += GET_SIZE(HDRP(NEXT_BLKP(bp)));
+        PUT(HDRP(bp), PACK(size, 0));
+        PUT(FTRP(NEXT_BLKP(bp)), PACK(size, 0));
+        
+        // last_bp 갱신
+        if (last_bp == NEXT_BLKP(bp)) {
+            last_bp = bp;
+        }
+    }
+    // 양쪽 블록과 병합
+    else if (!prev_alloc && !next_alloc) {
+        size += GET_SIZE(HDRP(PREV_BLKP(bp))) + GET_SIZE(FTRP(NEXT_BLKP(bp)));
+        PUT(HDRP(PREV_BLKP(bp)), PACK(size, 0));
+        PUT(FTRP(NEXT_BLKP(bp)), PACK(size, 0));
+        bp = PREV_BLKP(bp);
+
+        // last_bp 갱신
+        last_bp = bp;
+    }
+
+    return bp;
 }
 
 void* mm_realloc(void* bp, size_t size) 								  // reallocation--------------------------------------------------------------------
