@@ -69,7 +69,6 @@ static void cut_link(void* bp);
 static void push_first(void* bp);
 
 static char* heap_listp;												 // heap의 첫 번째 pointer-------------------------------------------------------
-static char *last_bp = NULL;
 
 int mm_init(void)														 // 메모리 처음 만들기
 {
@@ -132,33 +131,30 @@ void* mm_malloc(size_t size)											 // 메모리할당----------------------
 }
 
 static void* find_fit(size_t asize) {
-    char *bp;
+    void* bp;
+    void* best_fit = NULL;
+    size_t smallest_diff = (size_t)-1; // 최대로 설정해 초기화
 
-    // last_bp 초기화
-    if (last_bp == NULL) {
-        last_bp = heap_listp;
-    }
-
-    // 시작 위치부터 힙의 끝까지 탐색
-    for (bp = last_bp; GET_SIZE(HDRP(bp)) > 0; bp = NEXT_BLKP(bp)) {
+    // 힙 전체를 탐색
+    for (bp = heap_listp; GET_SIZE(HDRP(bp)) > 0; bp = NEXT_BLKP(bp)) {
         if (!GET_ALLOC(HDRP(bp)) && (asize <= GET_SIZE(HDRP(bp)))) {
-            last_bp = bp; // 찾은 위치 저장
-            return bp;
+            size_t diff = GET_SIZE(HDRP(bp)) - asize;
+
+            // 가장 잘 맞는 블록 갱신
+            if (diff < smallest_diff) {
+                best_fit = bp;
+                smallest_diff = diff;
+            }
+
+            // 완벽하게 맞는 블록을 찾은 경우 즉시 반환
+            if (diff == 0) {
+                break;
+            }
         }
     }
 
-    // 힙의 시작부터 last_bp까지 다시 탐색
-    for (bp = heap_listp; bp < last_bp; bp = NEXT_BLKP(bp)) {
-        if (!GET_ALLOC(HDRP(bp)) && (asize <= GET_SIZE(HDRP(bp)))) {
-            last_bp = bp; // 찾은 위치 저장
-            return bp;
-        }
-    }
-
-    // 적절한 블록을 찾지 못한 경우
-    return NULL;
+    return best_fit;
 }
-
 
 
 static void place(void* bp, size_t asize) {                               // free 블록에 넣어주는 함수 ---------------------------------------------------------
@@ -254,11 +250,6 @@ static void* coalesce(void* bp)											  // 연속된 free 처리------------
 
 		bp = PREV_BLKP(bp);
 	}
-
-	// last_bp가 병합되는 블록을 가리키는 경우, last_bp 업데이트
-    if (last_bp == NEXT_BLKP(bp) || last_bp == PREV_BLKP(bp)) {
-        last_bp = bp;
-    }
 
 	return bp;
 }
