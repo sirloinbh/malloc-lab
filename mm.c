@@ -69,7 +69,7 @@ static void cut_link(void* bp);
 static void push_first(void* bp);
 
 static char* heap_listp;												 // heap의 첫 번째 pointer-------------------------------------------------------
-
+static char *last_bp = NULL;
 
 int mm_init(void)														 // 메모리 처음 만들기
 {
@@ -131,16 +131,34 @@ void* mm_malloc(size_t size)											 // 메모리할당----------------------
 	return bp;
 }
 
-static void* find_fit(size_t asize) {									 // 들어갈 자리를 찾는 함수 first fit-----------------------------------------------------
-	void* bp;													
+static void* find_fit(size_t asize) {
+    char *bp;
 
-	for (bp = PREV_FREE_BLKP(heap_listp); bp != (char*)NULL; bp = PREV_FREE_BLKP(bp)) {  // tail을 만날때까지 연결된 free list를 탐색 
-		if (asize <= GET_SIZE(HDRP(bp))) {												 // block이 주어진 사이즈보다 fit하면
-			return bp;
-		}
-	}
-	return NULL;
+    // last_bp 초기화
+    if (last_bp == NULL) {
+        last_bp = heap_listp;
+    }
+
+    // 시작 위치부터 힙의 끝까지 탐색
+    for (bp = last_bp; GET_SIZE(HDRP(bp)) > 0; bp = NEXT_BLKP(bp)) {
+        if (!GET_ALLOC(HDRP(bp)) && (asize <= GET_SIZE(HDRP(bp)))) {
+            last_bp = bp; // 찾은 위치 저장
+            return bp;
+        }
+    }
+
+    // 힙의 시작부터 last_bp까지 다시 탐색
+    for (bp = heap_listp; bp < last_bp; bp = NEXT_BLKP(bp)) {
+        if (!GET_ALLOC(HDRP(bp)) && (asize <= GET_SIZE(HDRP(bp)))) {
+            last_bp = bp; // 찾은 위치 저장
+            return bp;
+        }
+    }
+
+    // 적절한 블록을 찾지 못한 경우
+    return NULL;
 }
+
 
 
 static void place(void* bp, size_t asize) {                               // free 블록에 넣어주는 함수 ---------------------------------------------------------
@@ -236,6 +254,12 @@ static void* coalesce(void* bp)											  // 연속된 free 처리------------
 
 		bp = PREV_BLKP(bp);
 	}
+
+	// last_bp가 병합되는 블록을 가리키는 경우, last_bp 업데이트
+    if (last_bp == NEXT_BLKP(bp) || last_bp == PREV_BLKP(bp)) {
+        last_bp = bp;
+    }
+
 	return bp;
 }
 
