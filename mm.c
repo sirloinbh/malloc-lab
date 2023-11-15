@@ -162,34 +162,22 @@ void* mm_malloc(size_t size)											 // 메모리할당----------------------
 }
 
 
-static char *last_bp; // 마지막으로 찾은 블록의 위치
+static void* find_fit(size_t asize) {
+    void* bp;
+    void* best_fit = NULL;
+    size_t min_diff = (size_t)-1; // 가장 작은 차이를 저장하기 위한 변수, 초기값은 최대치로 설정
 
-static void* find_fit(size_t asize) {									 
-	// 초기화: last_bp가 NULL이면 heap_listp로 설정
-	if (last_bp == NULL) {
-		last_bp = heap_listp;
-	}
+    for (bp = heap_listp; GET_SIZE(HDRP(bp)) > 0; bp = NEXT_BLKP(bp)) {
+        if (!GET_ALLOC(HDRP(bp)) && (asize <= GET_SIZE(HDRP(bp)))) {
+            size_t diff = GET_SIZE(HDRP(bp)) - asize;
+            if (diff < min_diff) {
+                best_fit = bp;
+                min_diff = diff;
+            }
+        }
+    }
 
-	char *bp;
-
-	// last_bp에서 시작하여 충분히 큰 블록을 찾을 때까지 순환
-	for (bp = last_bp; GET_SIZE(HDRP(bp)) > 0; bp = NEXT_BLKP(bp)) {
-		if (!GET_ALLOC(HDRP(bp)) && (asize <= GET_SIZE(HDRP(bp)))) {
-			last_bp = NEXT_BLKP(bp); // 다음 검색을 위해 마지막 위치 업데이트
-			return bp;
-		}
-	}
-
-	// 처음부터 last_bp까지 다시 탐색
-	for (bp = heap_listp; bp < last_bp; bp = NEXT_BLKP(bp)) {
-		if (!GET_ALLOC(HDRP(bp)) && (asize <= GET_SIZE(HDRP(bp)))) {
-			last_bp = NEXT_BLKP(bp); // 다음 검색을 위해 마지막 위치 업데이트
-			return bp;
-		}
-	}
-
-	// 적절한 블록을 찾지 못한 경우
-	return NULL;
+    return best_fit; // 가장 적절한 블록을 반환, 없으면 NULL 반환
 }
 
 
