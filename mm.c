@@ -162,41 +162,18 @@ void* mm_malloc(size_t size)											 // 메모리할당----------------------
 }
 
 
-static void* find_fit(size_t asize) {									 // 들어갈 자리를 찾는 함수  best fit -------------------------------------------------------
+static void* find_fit(size_t asize) {									 // 들어갈 자리를 찾는 함수 first fit -------------------------------------------------------
 	void* bp;
-	void* best_bp = (char*)NULL;
 
-	size_t best;
-
-	static char* seg;
-
-	int i = 0;
-	for (i = 32; i > 0; i--) { 		 									 // 2^32 부터 비트연산으로 적당한 값을 찾음 (작은값은 필요없다.) 
-		if ((asize & (1 << (i))) > 0) {
-			break;
+	for (bp = heap_listp; GET_SIZE(HDRP(bp)) > 0; bp = NEXT_BLKP(bp)) {  // heap_listp부터 시작하여 모든 블록을 탐색
+		if (!GET_ALLOC(HDRP(bp)) && (asize <= GET_SIZE(HDRP(bp)))) {     // 할당되지 않은(free) 블록이고 요청된 사이즈를 수용할 수 있으면
+			return bp;													 // 첫 번째 적합한 블록을 반환
 		}
 	}
-
-	int j = i;
-	for (j = i; j <= 32; j++) {											 // 적당한 값부터 탐색 시작
-		seg = seg_listp + (j * WSIZE);
-		if (GET_P(seg) != (char*)NULL) {								 // n번째 주소가 비어있지 않다면 탐색한다.
-			best = (1 << (j + 1));									     // best 값을 비교하기 위한 초기값
-			for (bp = PREV_FREE_BLKP(seg); bp != (char*)NULL; bp = PREV_FREE_BLKP(bp)) {	// segregated list부터 찾아서 들어감
-				if (asize <= GET_SIZE(HDRP(bp)) && GET_SIZE(HDRP(bp)) - asize < best) {     // block이 주어진 사이즈보다 fit하고 best라면
-					best_bp = bp;
-					best = GET_SIZE(HDRP(bp)) - asize;										// best 블록의 주소값을 저장해둠
-					//return bp;
-				}
-			}
-			if (best_bp != (char*)NULL) {
-				return best_bp;											// 찾은 best 블록이 있다면 반환
-			}
-		}
-	}
-
-	return NULL;														// 못 찾았다면 null 반환, extend 받게될 것
+	return NULL;														 // 적합한 블록을 찾지 못한 경우 NULL 반환
 }
+
+
 static void place(void* bp, size_t asize) {                               // free 블록에 넣어주는 함수 ---------------------------------------------------------
 	size_t csize = GET_SIZE(HDRP(bp));								      // 헤더의 사이즈를 읽어옴
 
