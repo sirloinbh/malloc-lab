@@ -15,13 +15,13 @@ team_t team = {
 	/* Team name */
 	"team2",
 	/* First member's full name */
-	"Tongky",
+	"Byeonghyeon Kim",
 	/* First member's email address */
-	"chotjd329@gmail.com",
+	"kimbh7391@gmail.com",
 	/* Second member's full name (leave blank if none) */
-	"Micky",
+	"Euihoon Kim",
 	/* Third member's full name (leave blank if none) */
-	"Johny"
+	"Seojin Lee"
 };
 
 /*------------------------------------------------------------------------------------------------------------------------------------------------------*/
